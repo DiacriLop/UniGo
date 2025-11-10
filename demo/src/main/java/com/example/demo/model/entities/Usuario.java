@@ -8,6 +8,9 @@ import java.util.Date;
 @Table(name = "usuarios")
 public class Usuario {
 
+    @Transient
+    private static final long serialVersionUID = 1L;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -20,8 +23,11 @@ public class Usuario {
 
     private String correo;
 
-    @Column(name = "clave_hash")
+    @Column(name = "clave_hash", length = 512)
     private String claveHash;
+
+    @Column(name = "salt", length = 24, nullable = false)
+    private String salt; // Will store base64 encoded salt
 
     @Enumerated(EnumType.STRING)
     private Rol rol;
@@ -86,6 +92,14 @@ public class Usuario {
 
     public void setClaveHash(String claveHash) {
         this.claveHash = claveHash;
+    }
+
+    public String getSalt() {
+        return salt;
+    }
+
+    public void setSalt(String salt) {
+        this.salt = salt;
     }
 
     public Rol getRol() {

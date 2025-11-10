@@ -2,7 +2,7 @@ package com.example.demo.model.service;
 
 import com.example.demo.model.dao.IUsuarioDao;
 import com.example.demo.model.entities.Usuario;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import com.example.demo.security.AESPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
@@ -12,10 +12,11 @@ import java.util.Optional;
 public class UsuarioService {
 
     private final IUsuarioDao usuarioDao;
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    private final AESPasswordEncoder passwordEncoder;
 
-    public UsuarioService(IUsuarioDao usuarioDao) {
+    public UsuarioService(IUsuarioDao usuarioDao, AESPasswordEncoder passwordEncoder) {
         this.usuarioDao = usuarioDao;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Transactional(readOnly = true)
@@ -40,18 +41,29 @@ public class UsuarioService {
             throw new RuntimeException("El correo ya está registrado");
         }
 
-        // 🔹 Hashear la clave antes de guardar
-        usuario.setClaveHash(passwordEncoder.encode(usuario.getClaveHash()));
+        // 🔹 Generar salt y encriptar la clave antes de guardar
+        String salt = passwordEncoder.generateSalt();
+        String encryptedPassword = passwordEncoder.encryptPassword(usuario.getClaveHash(), salt);
+        
+        usuario.setClaveHash(encryptedPassword);
+        usuario.setSalt(salt);
         return usuarioDao.save(usuario);
     }
 
     public boolean verificarClave(Usuario usuario, String clave) {
-        return passwordEncoder.matches(clave, usuario.getClaveHash());
+        if (usuario.getSalt() == null || usuario.getClaveHash() == null) {
+            return false;
+        }
+        return passwordEncoder.verifyPassword(clave, usuario.getClaveHash(), usuario.getSalt());
     }
 
     @Transactional
     public void actualizarClave(Usuario usuario, String nuevaClave) {
-        usuario.setClaveHash(passwordEncoder.encode(nuevaClave));
+        String salt = passwordEncoder.generateSalt();
+        String encryptedPassword = passwordEncoder.encryptPassword(nuevaClave, salt);
+        
+        usuario.setClaveHash(encryptedPassword);
+        usuario.setSalt(salt);
         usuarioDao.save(usuario);
     }
 

@@ -10,7 +10,6 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -25,17 +24,28 @@ public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AESPasswordEncoder aesPasswordEncoder;
 
-    public SecurityConfig(CustomUserDetailsService userDetailsService, JwtAuthenticationFilter jwtAuthenticationFilter) {
+    public SecurityConfig(CustomUserDetailsService userDetailsService, 
+                         JwtAuthenticationFilter jwtAuthenticationFilter,
+                         AESPasswordEncoder aesPasswordEncoder) {
         this.userDetailsService = userDetailsService;
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.aesPasswordEncoder = aesPasswordEncoder;
     }
 
     @Bean
     public AuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider() {
+            @Override
+            protected void additionalAuthenticationChecks(
+                org.springframework.security.core.userdetails.UserDetails userDetails,
+                org.springframework.security.authentication.UsernamePasswordAuthenticationToken authentication) {
+                // Skip password check as we handle it in the controller
+            }
+        };
         authProvider.setUserDetailsService(userDetailsService);
-        authProvider.setPasswordEncoder(passwordEncoder());
+        authProvider.setPasswordEncoder(aesPasswordEncoder);
         return authProvider;
     }
 
@@ -46,7 +56,7 @@ public class SecurityConfig {
 
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
+        return aesPasswordEncoder;
     }
 
     @Bean

@@ -10,7 +10,7 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import com.example.demo.security.AESPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
 
@@ -24,12 +24,12 @@ public class AuthController {
     private final UsuarioService usuarioService;
     private final AuthenticationManager authenticationManager;
     private final JwtTokenProvider tokenProvider;
-    private final PasswordEncoder passwordEncoder;
+    private final AESPasswordEncoder passwordEncoder;
 
     public AuthController(UsuarioService usuarioService,
                           AuthenticationManager authenticationManager,
                           JwtTokenProvider tokenProvider,
-                          PasswordEncoder passwordEncoder) {
+                          AESPasswordEncoder passwordEncoder) {
         this.usuarioService = usuarioService;
         this.authenticationManager = authenticationManager;
         this.tokenProvider = tokenProvider;
@@ -37,86 +37,76 @@ public class AuthController {
     }
 
     @PostMapping(value = "/login", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<?> authenticateUser(@RequestBody Map<String, String> loginRequest) {
-        Map<String, Object> response = new HashMap<>();
-        
-        // Log the incoming request for debugging
-        System.out.println("Login request: " + loginRequest);
-
-        String correo = loginRequest.get("correo");
-        String contrasena = loginRequest.get("contrasena");
-
-        // Validate required fields
-        if (correo == null || correo.trim().isEmpty() || contrasena == null || contrasena.trim().isEmpty()) {
-            return createErrorResponse("Correo y contraseña son requeridos");
-        }
-
+    public ResponseEntity<Map<String, Object>> authenticateUser(@RequestBody Map<String, String> loginRequest) {
         try {
-            // Find user by email
-            Optional<Usuario> usuarioOpt = usuarioService.findByCorreo(correo);
-            if (usuarioOpt.isEmpty()) {
-                return createErrorResponse("Correo o contraseña incorrectos", HttpStatus.UNAUTHORIZED);
+            // Validar campos requeridos
+            if (loginRequest == null || loginRequest.isEmpty()) {
+                return createErrorResponse("Se requiere un objeto JSON con correo y contraseña");
             }
 
-            Usuario usuario = usuarioOpt.get();
-            
-            // Debug log
-            System.out.println("Verifying password for user: " + usuario.getCorreo());
-            System.out.println("Stored hash: " + usuario.getClaveHash());
-            
-            // Verify password
-            boolean passwordMatches = usuarioService.verificarClave(usuario, contrasena);
-            System.out.println("Password matches: " + passwordMatches);
-            
-            if (!passwordMatches) {
-                return createErrorResponse("Correo o contraseña incorrectos", HttpStatus.UNAUTHORIZED);
+            String correo = loginRequest.get("correo");
+            String contrasena = loginRequest.get("contrasena");
+
+            // Validar que los campos no estén vacíos
+            if (correo == null || correo.trim().isEmpty() || contrasena == null || contrasena.trim().isEmpty()) {
+                return createErrorResponse("Correo y contraseña son requeridos");
             }
 
-            // Create authentication object
+            // Buscar usuario por correo
+            Usuario usuario = usuarioService.findByCorreo(correo.trim().toLowerCase())
+                .orElseThrow(() -> new SecurityException("Credenciales inválidas"));
+            
+            // Verificar contraseña
+            if (!usuarioService.verificarClave(usuario, contrasena)) {
+                return createErrorResponse("Correo o contraseña incorrectos", HttpStatus.UNAUTHORIZED);
+            }
+            
+            // Crear autenticación y generar token JWT
             CustomUserDetails userDetails = new CustomUserDetails(usuario);
             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                    userDetails, null, userDetails.getAuthorities());
+                userDetails, null, userDetails.getAuthorities());
+            String token = tokenProvider.generateToken(authentication);
             
-            SecurityContextHolder.getContext().setAuthentication(authentication);
-
-            // Generate JWT token
-            String jwt = tokenProvider.generateToken(authentication);
-
-            // Prepare response
-            Map<String, Object> loginResponse = new HashMap<>();
-            loginResponse.put("token", jwt);
-            loginResponse.put("tipo", "Bearer");
-            loginResponse.put("id", userDetails.getId());
-            loginResponse.put("correo", userDetails.getUsername());
-            loginResponse.put("nombreCompleto", userDetails.getFullName());
-
+            // Construir respuesta
+            Map<String, Object> response = new HashMap<>();
             response.put("ok", true);
             response.put("mensaje", "Inicio de sesión exitoso");
-            response.put("data", loginResponse);
+            response.put("data", Map.of(
+                "token", token,
+                "usuario", Map.of(
+                    "id", usuario.getId(),
+                    "correo", usuario.getCorreo(),
+                    "nombres", usuario.getNombres(),
+                    "apellidos", usuario.getApellidos(),
+                    "rol", usuario.getRol().name()
+                )
+            ));
 
             return ResponseEntity.ok(response);
 
+        } catch (SecurityException e) {
+            return createErrorResponse("Credenciales inválidas", HttpStatus.UNAUTHORIZED);
         } catch (Exception e) {
-            return createErrorResponse("Error al iniciar sesión: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+            return createErrorResponse("Error al procesar la solicitud", HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
     @PostMapping(value = "/registro", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<?> registrarUsuario(@RequestBody Map<String, String> request) {
-        Map<String, Object> response = new HashMap<>();
-
+    public ResponseEntity<Map<String, Object>> registrarUsuario(@RequestBody Map<String, String> request) {
         try {
-            // Validate required fields
+            // Validar que la solicitud no esté vacía
+            if (request == null || request.isEmpty()) {
+                return createErrorResponse("Se requiere un objeto JSON con los datos del usuario");
+            }
+
+            // Validar campos requeridos
             String nombre = request.get("nombre");
             String apellido = request.get("apellido");
             String correo = request.get("correo");
             String contrasena = request.get("contrasena");
             String fechaNacimientoStr = request.get("fechaNacimiento");
 
-            // Debug log
-            System.out.println("Registration request - nombre: " + nombre + ", correo: " + correo);
-
-            // Basic validations
+            // Validaciones básicas
             if (nombre == null || nombre.trim().isEmpty()) {
                 return createErrorResponse("El nombre es requerido");
             }
@@ -129,49 +119,44 @@ public class AuthController {
                 return createErrorResponse("El correo electrónico no es válido");
             }
 
-            // Check if email already exists
-            if (usuarioService.findByCorreo(correo).isPresent()) {
+            // Verificar si el correo ya existe
+            if (usuarioService.findByCorreo(correo.trim().toLowerCase()).isPresent()) {
                 return createErrorResponse("El correo electrónico ya está registrado", HttpStatus.CONFLICT);
             }
 
             if (contrasena == null || contrasena.trim().isEmpty() || contrasena.length() < 8) {
                 return createErrorResponse("La contraseña debe tener al menos 8 caracteres");
             }
-            // Create new user
+
+            // Crear nuevo usuario
             Usuario nuevoUsuario = new Usuario();
             nuevoUsuario.setNombres(nombre.trim());
             nuevoUsuario.setApellidos(apellido.trim());
             nuevoUsuario.setCorreo(correo.trim().toLowerCase());
-            
-            // Set default role (cliente)
             nuevoUsuario.setRol(Usuario.Rol.cliente);
             
-            // Debug log before hashing
-            System.out.println("Raw password before hashing: " + contrasena);
-            
-            // Set the password (it will be hashed in the service)
+            // Establecer la contraseña (se encriptará en el servicio)
             nuevoUsuario.setClaveHash(contrasena);
             
-            // Debug log after hashing
-            System.out.println("Hashed password: " + nuevoUsuario.getClaveHash());
-            System.out.println("User role set to: " + nuevoUsuario.getRol());
-            
-            // Set birth date if provided
+            // Establecer fecha de nacimiento si se proporciona
             if (fechaNacimientoStr != null && !fechaNacimientoStr.trim().isEmpty()) {
                 try {
                     SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
-                    Date fechaNacimiento = sdf.parse(fechaNacimientoStr);
+                    sdf.setLenient(false);
+                    Date fechaNacimiento = sdf.parse(fechaNacimientoStr.trim());
                     nuevoUsuario.setFechaNacimiento(fechaNacimiento);
                 } catch (Exception e) {
                     return createErrorResponse("Formato de fecha inválido. Use YYYY-MM-DD");
                 }
             }
 
-            // Save user
+            // Guardar usuario
             Usuario usuarioGuardado = usuarioService.save(nuevoUsuario);
-            usuarioGuardado.setClaveHash(null); // Don't return password hash
+            usuarioGuardado.setClaveHash(null); // No devolver el hash de la contraseña
+            usuarioGuardado.setSalt(null);     // No devolver la sal
 
-            // Build response
+            // Construir respuesta
+            Map<String, Object> response = new HashMap<>();
             response.put("ok", true);
             response.put("mensaje", "Usuario registrado exitosamente");
             response.put("data", usuarioGuardado);
@@ -179,30 +164,42 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
 
         } catch (Exception e) {
-            return createErrorResponse("Error al procesar la solicitud: " + e.getMessage(),
-                    HttpStatus.INTERNAL_SERVER_ERROR);
+            return createErrorResponse("Error al procesar el registro: " + e.getMessage(), 
+                                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
     @GetMapping("/usuario-actual")
-    public ResponseEntity<?> getCurrentUser() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+    public ResponseEntity<Map<String, Object>> getCurrentUser() {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            if (authentication == null || !authentication.isAuthenticated() || !(authentication.getPrincipal() instanceof CustomUserDetails)) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+            }
+
+            CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
+
+            // Obtener datos actualizados del usuario
+            Usuario usuario = usuarioService.findById(userDetails.getId())
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("ok", true);
+            response.put("data", Map.of(
+                "id", usuario.getId(),
+                "correo", usuario.getCorreo(),
+                "nombres", usuario.getNombres(),
+                "apellidos", usuario.getApellidos(),
+                "rol", usuario.getRol().name()
+            ));
+
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            return createErrorResponse("Error al obtener la información del usuario: " + e.getMessage(), 
+                                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
-
-        CustomUserDetails userDetails = (CustomUserDetails) authentication.getPrincipal();
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("ok", true);
-        response.put("data", Map.of(
-                "id", userDetails.getId(),
-                "correo", userDetails.getUsername(),
-                "nombreCompleto", userDetails.getFullName()
-        ));
-
-        return ResponseEntity.ok(response);
     }
 
     // Helper methods for error responses
