@@ -3,74 +3,80 @@ package com.example.demo.security;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.AuthenticationProvider;
-import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableMethodSecurity(
-    securedEnabled = true,
-    jsr250Enabled = true
-)
 public class SecurityConfig {
-
-    private final CustomUserDetailsService userDetailsService;
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
-    private final AESPasswordEncoder aesPasswordEncoder;
-
-    public SecurityConfig(CustomUserDetailsService userDetailsService, 
-                         JwtAuthenticationFilter jwtAuthenticationFilter,
-                         AESPasswordEncoder aesPasswordEncoder) {
-        this.userDetailsService = userDetailsService;
-        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
-        this.aesPasswordEncoder = aesPasswordEncoder;
-    }
-
-    @Bean
-    public AuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider() {
-            @Override
-            protected void additionalAuthenticationChecks(
-                org.springframework.security.core.userdetails.UserDetails userDetails,
-                org.springframework.security.authentication.UsernamePasswordAuthenticationToken authentication) {
-                // Skip password check as we handle it in the controller
-            }
-        };
-        authProvider.setUserDetailsService(userDetailsService);
-        authProvider.setPasswordEncoder(aesPasswordEncoder);
-        return authProvider;
-    }
-
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
-        return config.getAuthenticationManager();
-    }
-
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return aesPasswordEncoder;
-    }
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+
         http
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/**").permitAll()
-                .anyRequest().authenticated()
-            )
-            .authenticationProvider(authenticationProvider())
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
-            
+                // Habilita CORS con configuración personalizada
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+
+                // Desactivar CSRF para APIs REST
+                .csrf(csrf -> csrf.disable())
+
+                // API sin sesiones (JWT → stateless)
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                )
+
+                // Rutas permitidas sin autenticación
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/api/auth/**").permitAll()
+                        .anyRequest().authenticated()
+                );
+
         return http.build();
+    }
+
+    // Authentication Manager
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
+        return authConfig.getAuthenticationManager();
+    }
+
+    // Encriptación de contraseñas
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    // Configuración correcta de CORS
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration config = new CorsConfiguration();
+
+        // Permite *cualquier puerto* (Flutter Web cambia el puerto cada ejecución)
+        config.setAllowedOriginPatterns(List.of("*"));
+
+        // Métodos permitidos para el frontend
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+
+        // Headers permitidos
+        config.setAllowedHeaders(List.of("*"));
+
+        // Necesario si usas cookies o tokens en headers
+        config.setAllowCredentials(true);
+
+        // Aplica config para todas las rutas
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", config);
+
+        return source;
     }
 }
